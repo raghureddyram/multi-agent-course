@@ -18,7 +18,7 @@ import os
 import time
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from lib.cache import TwoTierCache
@@ -63,45 +63,51 @@ async def translate_one(text: str, target: str) -> dict:
 
     t0 = time.perf_counter()
 
-    # -----------------------------------------------------------------------
-    # TODO (YOU) — the caching flow. This is the heart of the assignment.
-    #   1. Ask the cache for `text` (cache.get). If it's a HIT, use it and set
-    #      cached=True — do NOT call the LLM.
-    #   2. On a MISS, call the LLM (translate_text), then store the result
-    #      (cache.set) so the next identical request is a hit. cached=False.
-    #   3. Measure latencyMs from t0 in BOTH paths (a cache hit should be
-    #      dramatically faster — that's the point you're demonstrating).
-    #
-    # cached_value = await cache.get(text, target)
-    # if cached_value is not None:
-    #     ...
-    # else:
-    #     translated = await translate_text(text, target, model=MODEL)
-    #     await cache.set(text, target, translated, model=MODEL)
-    #     ...
-    # -----------------------------------------------------------------------
-    raise NotImplementedError("Implement the cache/LLM flow in translate_one()")
+    # 1) cache first — a hit never touches the LLM
+    cached_value = await cache.get(text, target)
+    if cached_value is not None:
+        latency = int((time.perf_counter() - t0) * 1000)
+        return {"translated": cached_value, "cached": True, "latencyMs": latency, "model": MODEL}
+
+    # 2) miss — call the LLM (errors propagate → gateway returns 502), then
+    #    store the result so the next identical request is a hit.
+    translated = await translate_text(text, target, model=MODEL)
+    await cache.set(text, target, translated, model=MODEL)
+
+    # 3) measure latency on this path too — it should dwarf the hit path
+    latency = int((time.perf_counter() - t0) * 1000)
+    return {"translated": translated, "cached": False, "latencyMs": latency, "model": MODEL}
 
 
 @app.post("/translate")
-async def translate(body: TranslateIn):
+async def translate(body: TranslateIn, request: Request):
+    request_id = request.headers.get("x-request-id", "-")
     result = await translate_one(body.text, body.target)
     log.info(
         "translate",
-        extra={"cached": result["cached"], "latencyMs": result["latencyMs"], "chars": len(body.text)},
+        extra={
+            "request_id": request_id,
+            "cached": result["cached"],
+            "latencyMs": result["latencyMs"],
+            "chars": len(body.text),
+        },
     )
     return result
 
 
 @app.post("/translate/batch")
-async def translate_batch(body: BatchIn):
+async def translate_batch(body: BatchIn, request: Request):
+    request_id = request.headers.get("x-request-id", "-")
     t0 = time.perf_counter()
     results = []
     for t in body.texts:
         results.append(await translate_one(t, body.target))
     latency = int((time.perf_counter() - t0) * 1000)
     hits = sum(1 for r in results if r["cached"])
-    log.info("translate_batch", extra={"count": len(results), "hits": hits, "latencyMs": latency})
+    log.info(
+        "translate_batch",
+        extra={"request_id": request_id, "count": len(results), "hits": hits, "latencyMs": latency},
+    )
     # widget expects {results: [{translated, cached}], latencyMs}
     return {"results": [{"translated": r["translated"], "cached": r["cached"]} for r in results], "latencyMs": latency}
 

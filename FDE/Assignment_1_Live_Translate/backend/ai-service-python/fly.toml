@@ -1,0 +1,20 @@
+# AI service — PRIVATE. No public IP; only the gateway reaches it over Fly's
+# private network at http://rr-livetranslate-ai.internal:8080
+app = "rr-livetranslate-ai"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  PORT = "8080"
+  MODEL = "claude-sonnet-4-6"
+  TRANSLATION_DB_PATH = "/data/translations.db"
+
+# persistent SQLite cache — survives restarts and deploys
+[mounts]
+  source = "translations_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
