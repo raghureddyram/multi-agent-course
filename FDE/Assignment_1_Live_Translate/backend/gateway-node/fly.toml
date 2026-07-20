@@ -1,0 +1,21 @@
+# Gateway — PUBLIC. This is the only service the browser/extension touches.
+# It proxies to the private AI service over Fly's internal network.
+app = "rr-livetranslate-gw"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  PORT = "8080"
+  AI_SERVICE_URL = "http://rr-livetranslate-ai.internal:8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
